@@ -70,6 +70,7 @@ public interface DynmapCommonAPI {
      * Test if update renders are paused
      */
     public boolean getPauseUpdateRenders();
+    public boolean isRenderJobActive(String worldName);
     /**
      * Set player visibility (configuration - persistent)
      * @param player - player ID

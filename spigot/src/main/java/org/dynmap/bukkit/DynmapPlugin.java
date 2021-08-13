@@ -1118,6 +1118,11 @@ public class DynmapPlugin extends JavaPlugin implements DynmapAPI {
     }
 
     @Override
+    public boolean isRenderJobActive(String worldName) {
+        return core.isRenderJobActive(worldName);
+    }
+
+    @Override
     public final void setPlayerVisiblity(String player, boolean is_visible) {
         core.setPlayerVisiblity(player, is_visible);
     }

@@ -2580,5 +2580,10 @@ public class DynmapCore implements DynmapCommonAPI {
     public MapStorage getDefaultMapStorage() {
         return defaultStorage;
     }
+
+    @Override
+    public boolean isRenderJobActive(String worldName) {
+        return mapManager.isRenderJobActive(worldName);
+    }
 }
 
