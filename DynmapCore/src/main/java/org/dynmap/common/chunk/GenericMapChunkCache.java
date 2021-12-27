@@ -425,24 +425,7 @@ public abstract class GenericMapChunkCache extends MapChunkCache {
 
 		@Override
 		public final DynmapBlockState getBlockTypeAt(BlockStep s) {
-			if (s == BlockStep.Y_MINUS) {
-				if (y > ymin) {
-					return snap.getBlockType(bx, y - 1, bz);
-				}
-			} else if (s == BlockStep.Y_PLUS) {
-				if (y < (worldheight - 1)) {
-					return snap.getBlockType(bx, y + 1, bz);
-				}
-			} else {
-				BlockStep ls = laststep;
-				stepPosition(s);
-				DynmapBlockState tid = snap.getBlockType(bx, y, bz);
-				unstepPosition();
-				laststep = ls;
-				return tid;
-			}
-
-			return DynmapBlockState.AIR;
+			return getBlockTypeAt(s.xoff, s.yoff, s.zoff);
 		}
 
 		@Override
@@ -461,16 +444,6 @@ public abstract class GenericMapChunkCache extends MapChunkCache {
 		}
 
 		@Override
-		public final boolean isEmptySection() {
-	    	boolean[] flags = isSectionNotEmpty[chunkindex];
-	        if(flags == null) {
-				initSectionData(chunkindex);
-	            flags = isSectionNotEmpty[chunkindex];
-	        }
-	        return !flags[(y >> 4) + sectoff];
-		}
-
-		@Override
 		public final RenderPatchFactory getPatchFactory() {
 			return HDBlockModels.getPatchDefinitionFactory();
 		}
@@ -483,14 +456,14 @@ public abstract class GenericMapChunkCache extends MapChunkCache {
 
 		@Override
 		public final DynmapBlockState getBlockTypeAt(int xoff, int yoff, int zoff) {
-			int xx = this.x + xoff;
-			int yy = this.y + yoff;
-			int zz = this.z + zoff;
-			int idx = ((xx >> 4) - x_min) + (((zz >> 4) - z_min) * x_dim);
-			try {
-				return snaparray[idx].getBlockType(xx & 0xF, yy, zz & 0xF);
-			} catch (Exception x) {
+			int nx = x + xoff;
+			int ny = y + yoff;
+			int nz = z + zoff;
+			int nchunkindex = ((nx >> 4) - x_min) + (((nz >> 4) - z_min) * x_dim);
+			if ((nchunkindex >= snapcnt) || (nchunkindex < 0)) {
 				return DynmapBlockState.AIR;
+			} else {
+				return snaparray[nchunkindex].getBlockType(nx & 0xF, ny, nz & 0xF);
 			}
 		}
 
@@ -514,6 +487,16 @@ public abstract class GenericMapChunkCache extends MapChunkCache {
 				blk = snap.getBlockType(bx, y, bz);
 			}
 			return blk;
+		}
+
+		@Override
+		public int getDataVersion() {
+			return (snap != null) ? snap.dataVersion : 0;
+		}
+
+		@Override
+		public String getChunkStatus() {
+			return (snap != null) ? snap.chunkStatus : null;
 		}
 	}
 
@@ -904,28 +887,31 @@ public abstract class GenericMapChunkCache extends MapChunkCache {
 
 	private static final String litStates[] = { "light", "spawn", "heightmaps", "full" };
 	
-	public GenericChunk parseChunkFromNBT(GenericNBTCompound nbt) {
-		if ((nbt != null) && nbt.contains("Level")) {
+	public GenericChunk parseChunkFromNBT(GenericNBTCompound orignbt) {
+		GenericNBTCompound nbt = orignbt;
+		if ((nbt != null) && nbt.contains("Level", GenericNBTCompound.TAG_COMPOUND)) {
 			nbt = nbt.getCompound("Level");
 		}
 		if (nbt == null) return null;
 		String status = nbt.getString("Status");
-		int version = nbt.getInt("DataVersion");
-
+		int version = orignbt.getInt("DataVersion");
+		boolean lit = nbt.getBoolean("isLightOn");
 		boolean hasLitState = false;
 		if (status != null) {
 			for (int i = 0; i < litStates.length; i++) {
 				if (status.equals(litStates[i])) { hasLitState = true; }
 			}
 		}
-		boolean hasLight = hasLitState;	// Assume good light in a lit state
+		boolean hasLight = false; // pessimistic: only has light if we see it, due to WB and other flawed chunk generation hasLitState;	// Assume good light in a lit state
 		
 		// Start generic chunk builder
 		GenericChunk.Builder bld = new GenericChunk.Builder(dw.minY,  dw.worldheight);
 		int x = nbt.getInt("xPos");
 		int z = nbt.getInt("zPos");
 
-		bld.coords(x, z);
+		// Set chunk info
+		bld.coords(x, z).chunkStatus(status).dataVersion(version);
+		
         if (nbt.contains("InhabitedTime")) {
         	bld.inhabitedTicks(nbt.getLong("InhabitedTime"));
         }
@@ -959,13 +945,6 @@ public abstract class GenericMapChunkCache extends MapChunkCache {
         GenericChunkSection.Builder sbld = new GenericChunkSection.Builder();
         /* Get sections */
         GenericNBTList sect = nbt.contains("sections") ? nbt.getList("sections", 10) : nbt.getList("Sections", 10);
-        // Prescan sections to see if lit
-        for (int i = 0; i < sect.size(); i++) {
-            GenericNBTCompound sec = sect.getCompound(i);
-            if (sec.contains("SkyLight")) { // Only consider skylight for now, since that is what we generate if needed
-            	hasLight = true;
-            }
-        }
         // And process sections
         for (int i = 0; i < sect.size(); i++) {
             GenericNBTCompound sec = sect.getCompound(i);
@@ -1078,6 +1057,7 @@ public abstract class GenericMapChunkCache extends MapChunkCache {
             }
             if (sec.contains("SkyLight")) {
             	sbld.skyLight(sec.getByteArray("SkyLight"));
+            	hasLight = true;
             }
 			// If section biome palette
 			if (sec.contains("biomes")) {
@@ -1111,8 +1091,8 @@ public abstract class GenericMapChunkCache extends MapChunkCache {
 			bld.addSection(secnum, sbld.build());
 			sbld.reset();
         }
-        // If pre 1.17, assume unlit state means bad light
-		if ((version < 2724) && (!hasLitState)) {
+        // Assume skylight is only trustworthy in a lit state
+		if ((!hasLitState) || (!lit)) {
 			hasLight = false;
 		}
         // If no light, do simple generate
